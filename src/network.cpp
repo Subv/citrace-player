@@ -14,19 +14,22 @@
 #include <sys/types.h>
 #include <sys/socket.h>
 
-static void *SOC_buffer = NULL;
+static u32* SOC_buffer = NULL;
 static FILE* write_stream = NULL;
 static int netloader_listenfd = -1;
 static int netloader_datafd = -1;
 
 #define CITRACE_PORT 11113
 
+#define SOC_ALIGN       0x1000
+#define SOC_BUFFERSIZE 0x100000
+
 void NetworkInit() {
-    SOC_buffer = memalign(0x1000, 0x100000);
+    SOC_buffer = (u32*)memalign(SOC_ALIGN, SOC_BUFFERSIZE);
     if (SOC_buffer == NULL)
         return;
 
-    SOC_Initialize((uint32_t*)SOC_buffer, 0x100000);
+    socInit(SOC_buffer, SOC_BUFFERSIZE);
 
     netloader_listenfd = socket(AF_INET, SOCK_STREAM, 0);
 
@@ -52,7 +55,7 @@ void NetworkExit() {
 
     close(netloader_listenfd);
 
-    SOC_Shutdown();
+    socExit();
 }
 
 static void NetworkVPrint(const char* str, va_list args)
