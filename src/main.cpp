@@ -342,8 +342,7 @@ void SubmitInitialGPUData(std::ifstream& input, CiTrace::CTHeader& header) {
 
     // Setup initial GPU state
     //gfxInitDefault(); // TODO: Setup framebuffer info instead, here!
-    static bool init = false;
-    gfxInit(GSP_BGR8_OES,GSP_BGR8_OES,true);
+    gfxInit(GSP_BGR8_OES,GSP_BGR8_OES,false);
 
 
     NetworkPrint("Command list is located at %08X", (uint32_t)command_list.data());
@@ -404,7 +403,7 @@ int main() {
     NetworkPrint("Successfully read input file\n");
 
     SubmitInitialGPUData(input, header);
-    
+
     while (aptMainLoop()) {
         hidScanInput();
         if(keysDown() & KEY_START)
