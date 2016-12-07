@@ -294,106 +294,115 @@ int main() {
 
     NetworkPrint("Successfully read input file\n");
 
-    // Create command list buffer (aligned to 16 byte)
-    std::vector<uint32_t, LinearHeapAllocator<uint32_t>> command_list;
+    {
+        // Create command list buffer (aligned to 16 byte)
+        std::vector<uint32_t, LinearHeapAllocator<uint32_t>> command_list;
 
-    // Helper lambda function used to queue commands for setting up initial state
-    auto SubmitInternalMemory = [&](uint32_t file_offset, uint32_t num_words, uint32_t pica_register_id, bool is_float_uniform) {
-        if (0 == num_words)
-            return;
+        // Helper lambda function used to queue commands for setting up initial state
+        auto SubmitInternalMemory = [&](uint32_t file_offset, uint32_t num_words, uint32_t pica_register_id, bool is_float_uniform) {
+            if (0 == num_words)
+                return;
 
-        command_list.push_back(0);
-        command_list.push_back(pica_register_id | 0xF0000);
+            command_list.push_back(0);
+            command_list.push_back(pica_register_id | 0xF0000);
 
-        input.seekg(file_offset);
+            input.seekg(file_offset);
 
-        // TODO: Should assert that the given size fits into a single command
+            // TODO: Should assert that the given size fits into a single command
 
-        if (is_float_uniform) {
-            // Pack 4 float24 values into 3 uint32_t values
+            if (is_float_uniform) {
+                // Pack 4 float24 values into 3 uint32_t values
 
-            bool command_written = false;
+                bool command_written = false;
 
-            for (size_t index = 1; index < num_words / 4; ++index) {
-                // Read 4 24-bit values (all of which are 32-bit aligned)
-                uint32_t values[4];
-                input.read((char*)values, sizeof(values));
-                command_list.push_back((values[3] << 8) | ((values[2] >> 16) & 0xFF));
-                if (!command_written) {
-                    command_list.push_back((pica_register_id + 1) | 0xF0000 | ((num_words / 4 * 3 - 1) << 20));
-                    command_written = true;
+                for (size_t index = 1; index < num_words / 4; ++index) {
+                    // Read 4 24-bit values (all of which are 32-bit aligned)
+                    uint32_t values[4];
+                    input.read((char*)values, sizeof(values));
+                    command_list.push_back((values[3] << 8) | ((values[2] >> 16) & 0xFF));
+                    if (!command_written) {
+                        command_list.push_back((pica_register_id + 1) | 0xF0000 | ((num_words / 4 * 3 - 1) << 20));
+                        command_written = true;
+                    }
+                    command_list.push_back(((values[2] & 0xFFFF) << 16) | ((values[1] >> 8) & 0xFFFF));
+                    command_list.push_back(((values[1] & 0xFF) << 24) | (values[0] & 0xFFFFFF));
                 }
-                command_list.push_back(((values[2] & 0xFFFF) << 16) | ((values[1] >> 8) & 0xFFFF));
-                command_list.push_back(((values[1] & 0xFF) << 24) | (values[0] & 0xFFFFFF));
-            }
-        } else {
-            command_list.push_back({});
-            input.read((char*)&command_list.back(), sizeof(uint32_t));
-            command_list.push_back((pica_register_id + 1) | 0xF0000 | ((num_words - 1) << 20));
-
-            for (size_t index = 1; index < num_words; ++index) {
+            } else {
                 command_list.push_back({});
                 input.read((char*)&command_list.back(), sizeof(uint32_t));
+                command_list.push_back((pica_register_id + 1) | 0xF0000 | ((num_words - 1) << 20));
+
+                for (size_t index = 1; index < num_words; ++index) {
+                    command_list.push_back({});
+                    input.read((char*)&command_list.back(), sizeof(uint32_t));
+                }
             }
+        };
+        for (unsigned i = 0; i < header.initial_state_offsets.default_attributes_size / 4; ++i) {
+            command_list.push_back(i);
+            command_list.push_back(0x232 | 0xF0000 | (3 << 20)); // followed by 4 float24 values packed into 3 extra uint32_t parameters
+
+            uint32_t values[4];
+            input.seekg(header.initial_state_offsets.default_attributes);
+            input.read((char*)values, sizeof(values));
+            command_list.push_back((values[3] << 8) | ((values[2] >> 16) & 0xFF));
+            command_list.push_back(((values[2] & 0xFFFF) << 16) | ((values[1] >> 8) & 0xFFFF));
+            command_list.push_back(((values[1] & 0xFF) << 24) | (values[0] & 0xFFFFFF));
         }
-    };
-    for (unsigned i = 0; i < header.initial_state_offsets.default_attributes_size / 4; ++i) {
-        command_list.push_back(i);
-        command_list.push_back(0x232 | 0xF0000 | (3 << 20)); // followed by 4 float24 values packed into 3 extra uint32_t parameters
+        SubmitInternalMemory(header.initial_state_offsets.gs_program_binary,  header.initial_state_offsets.gs_program_binary_size,  0x29b, false);
+        SubmitInternalMemory(header.initial_state_offsets.gs_swizzle_data,    header.initial_state_offsets.gs_swizzle_data_size,    0x2a5, false);
+        SubmitInternalMemory(header.initial_state_offsets.gs_float_uniforms,  header.initial_state_offsets.gs_float_uniforms_size,  0x290, true);
+        SubmitInternalMemory(header.initial_state_offsets.vs_program_binary,  header.initial_state_offsets.vs_program_binary_size,  0x2cb, false);
+        SubmitInternalMemory(header.initial_state_offsets.vs_swizzle_data,    header.initial_state_offsets.vs_swizzle_data_size,    0x2d5, false);
+        SubmitInternalMemory(header.initial_state_offsets.vs_float_uniforms,  header.initial_state_offsets.vs_float_uniforms_size,  0x2c0, true);
 
-        uint32_t values[4];
-        input.seekg(header.initial_state_offsets.default_attributes);
-        input.read((char*)values, sizeof(values));
-        command_list.push_back((values[3] << 8) | ((values[2] >> 16) & 0xFF));
-        command_list.push_back(((values[2] & 0xFFFF) << 16) | ((values[1] >> 8) & 0xFFFF));
-        command_list.push_back(((values[1] & 0xFF) << 24) | (values[0] & 0xFFFFFF));
+        // Load initial set of pica registers.
+        // NOTE: Loading shader data and stuff also needs to be done by writing pica registers,
+        //       which is why we set up this state last.
+        input.seekg(header.initial_state_offsets.pica_registers);
+        unsigned num_pica_registers = std::min<unsigned>(pica_register_state_mask.size(), header.initial_state_offsets.pica_registers_size);
+        for (unsigned regid = 0; regid < num_pica_registers; ++regid) {
+            uint32_t value;
+            input.read((char*)&value, sizeof(value));
+            if (pica_register_state_mask[regid] == 0)
+                continue;
+
+            command_list.push_back(value);
+            command_list.push_back(regid | (pica_register_state_mask[regid] << 16)); // write value with mask
+        }
+
+        // Append an IRQ instruction to the command buffer
+        command_list.push_back(0x12345678);
+        command_list.push_back(0b00000000000011110000000000000000 | 0x10);
+
+        // Make sure size is a multiple of 16 bytes
+        while ((command_list.size() % (16 / sizeof(uint32_t))) != 0) {
+            // Repeat previous command (for lack of a better alternative)
+            // TODO: Maybe we can come up with something less intrusive?
+            command_list.push_back(command_list[command_list.size() - 2]);
+            command_list.push_back(command_list[command_list.size() - 2]);
+        }
+
+        GSPGPU_FlushDataCache(command_list.data(), command_list.size() * sizeof(uint32_t));
+
+
+        // Setup initial GPU state
+        gfxInitDefault(); // TODO: Setup framebuffer info instead, here!
+
+        NetworkPrint("Command list is located at %08X", (uint32_t)command_list.data());
+
+        NetworkPrint("Initialization done, starting playback now\n");
+
+        GX_ProcessCommandList(command_list.data(), command_list.size() * sizeof(uint32_t), 1);
+        gspWaitForP3D();
+
     }
-    SubmitInternalMemory(header.initial_state_offsets.gs_program_binary,  header.initial_state_offsets.gs_program_binary_size,  0x29b, false);
-    SubmitInternalMemory(header.initial_state_offsets.gs_swizzle_data,    header.initial_state_offsets.gs_swizzle_data_size,    0x2a5, false);
-    SubmitInternalMemory(header.initial_state_offsets.gs_float_uniforms,  header.initial_state_offsets.gs_float_uniforms_size,  0x290, true);
-    SubmitInternalMemory(header.initial_state_offsets.vs_program_binary,  header.initial_state_offsets.vs_program_binary_size,  0x2cb, false);
-    SubmitInternalMemory(header.initial_state_offsets.vs_swizzle_data,    header.initial_state_offsets.vs_swizzle_data_size,    0x2d5, false);
-    SubmitInternalMemory(header.initial_state_offsets.vs_float_uniforms,  header.initial_state_offsets.vs_float_uniforms_size,  0x2c0, true);
-
-    // Load initial set of pica registers.
-    // NOTE: Loading shader data and stuff also needs to be done by writing pica registers,
-    //       which is why we set up this state last.
-    input.seekg(header.initial_state_offsets.pica_registers);
-    unsigned num_pica_registers = std::min<unsigned>(pica_register_state_mask.size(), header.initial_state_offsets.pica_registers_size);
-    for (unsigned regid = 0; regid < num_pica_registers; ++regid) {
-        uint32_t value;
-        input.read((char*)&value, sizeof(value));
-        if (pica_register_state_mask[regid] == 0)
-            continue;
-
-        command_list.push_back(value);
-        command_list.push_back(regid | (pica_register_state_mask[regid] << 16)); // write value with mask
-    }
-
-    // Make sure size is a multiple of 16 bytes
-    while ((command_list.size() % (16 / sizeof(uint32_t))) != 0) {
-        // Repeat previous command (for lack of a better alternative)
-        // TODO: Maybe we can come up with something less intrusive?
-        command_list.push_back(command_list[command_list.size() - 2]);
-        command_list.push_back(command_list[command_list.size() - 2]);
-    }
-
-    GSPGPU_FlushDataCache(command_list.data(), command_list.size() * sizeof(uint32_t));
-
-
-    // Setup initial GPU state
-    gfxInitDefault(); // TODO: Setup framebuffer info instead, here!
-
-    NetworkPrint("Command list is located at %08X", (uint32_t)command_list.data());
-
-    NetworkPrint("Initialization done, starting playback now\n");
 
     while (aptMainLoop()) {
         hidScanInput();
         if(keysDown() & KEY_START)
             break;
 
-        GX_ProcessCommandList(command_list.data(), command_list.size() * sizeof(uint32_t), 1);
         NetworkPrint("Initial playback GPU state setup done\n");
         // TODO: wait for completion of the command list
 
@@ -430,7 +439,8 @@ int main() {
                     // TODO: Guard against invalid inputs (e.g. invalid address or size)
 
                     static const size_t TransferBufferSize = 1024;
-                    char* buffer = (char*)linearAlloc(TransferBufferSize);
+                    u8* buffer = (u8*)(0x02fbc000 + FCRAMStartVAddr() - TransferBufferSize * 2);
+                    //char* buffer = (char*)linearAlloc(TransferBufferSize);
 
                     NetworkPrint("Load 0x%x VRAM bytes from file offset 0x%x to 0x%08x (i.e. vaddr 0x%08x)\n",
                                     stream_element.memory_load.size, stream_element.memory_load.file_offset,
@@ -443,7 +453,7 @@ int main() {
                          remaining -= TransferBufferSize, addr += TransferBufferSize) {
                         auto size = std::min<size_t>(TransferBufferSize, remaining);
                         NetworkPrint("-> Transfer 0x%x bytes from 0x%08x to 0x%08x (i.e. vaddr 0x%08x)\n", (int)size, (u32)buffer, addr, PhysicalToVirtualAddress(addr));
-                        input.read(buffer, size);
+                        input.read((char*)buffer, size);
                         GSPGPU_FlushDataCache(buffer, size);
 
                         GX_RequestDma((u32*)buffer, (u32*)PhysicalToVirtualAddress(addr), size);
@@ -453,7 +463,7 @@ int main() {
                             break;
                     }
 
-                    linearFree(buffer);
+                    //linearFree(buffer);
                 } else {
                     NetworkPrint("Load 0x%x bytes from file offset 0x%x to 0x%08x (i.e. vaddr 0x%08x)\n",
                                    stream_element.memory_load.size, stream_element.memory_load.file_offset,
@@ -529,22 +539,64 @@ int main() {
                     GSPGPU_WriteHWRegs(stream_element.register_write.physical_address - 0x10100000 + 0x1EC00000 - 0x1EB00000, &data, size);
                 }
 
+                static uint32_t prev_fill0_addr = 0;
+                static uint32_t prev_fill1_addr = 0;
+
+                if (stream_element.register_write.physical_address == 0x10400010)
+                    prev_fill0_addr = data;
+                else if (stream_element.register_write.physical_address == 0x10400020)
+                    prev_fill1_addr = data;
+
+                if (stream_element.register_write.physical_address == 0x10400C00) {
+                    NetworkPrint("Transfer from %08X\n", (u32)(data << 3));
+                }
+
+                if (stream_element.register_write.physical_address == 0x10400C04) {
+                    NetworkPrint("Transfer to %08X\n", (u32)(data << 3));
+                }
+
+                if (stream_element.register_write.physical_address == 0x10400468) {
+                    NetworkPrint("Topscreen Left Eye First addr %08X\n", (u32)(data));
+                }
+                
+                if (stream_element.register_write.physical_address == 0x1040046C) {
+                    NetworkPrint("Topscreen Left Eye Second addr %08X\n", (u32)(data));
+                }
+
                 // Wait for completion if the register write triggered an operation
-                if (stream_element.register_write.physical_address == 0x1040001C ||
+                if (stream_element.register_write.physical_address == 0x1040001C || // memory_fill_config[0].trigger
                     stream_element.register_write.physical_address == 0x1040002C ||
                     stream_element.register_write.physical_address == 0x10400C18 ||
                     stream_element.register_write.physical_address == 0x104018F0) {
 
                     NetworkPrint("Waiting for operation to finish..\n");
                     int count = 0;
-                     uint32_t val = 1;
-                    do {
-                        GSPGPU_ReadHWRegs(stream_element.register_write.physical_address - 0x10100000 + 0x1EC00000 - 0x1EB00000, &val, 4);
-                        if (val & 1)
-                            break;
+                    uint32_t val = 1;
+                    uint32_t addr = stream_element.register_write.physical_address;
 
-                        svcSleepThread(1000);
-                    } while(count++ < 100);
+                    if (addr == 0x1040001C) {
+                        // If the transfer was triggered, wait for the operation to complete
+                        if (prev_fill0_addr != 0 && data & 2)
+                            gspWaitForPSC0();
+                    }
+                    else if (addr == 0x1040002C) {
+                        // If the transfer was triggered, wait for the operation to complete
+                        if (prev_fill1_addr != 0 && data & 2)
+                            gspWaitForPSC1();
+                    }
+                    else if (addr == 0x10400C18) {
+                        // If the transfer was triggered, wait for the operation to complete
+                        if (data & 2)
+                            gspWaitForPPF();
+                    }
+                    else if (addr == 0x104018F0) {
+                        // We should wait for P3D here, but fuck it.
+                        if (data & 1) {
+                            //gspWaitForP3D();
+                            svcSleepThread(100000000);
+                        }
+                    }
+
                 }
                 break;
             }
@@ -554,9 +606,20 @@ int main() {
                 break;
             }
         }
+
+        //break;
     }
 
 exit:
+    NetworkPrint("Preparing to exit.\n");
+    while (true) {
+        hidScanInput();
+        if(keysDown() & KEY_START)
+            break;
+
+        gspWaitForVBlank();
+    }
+
     gfxExit();
 
     NetworkExit();
