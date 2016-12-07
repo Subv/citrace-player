@@ -342,7 +342,7 @@ void SubmitInitialGPUData(std::ifstream& input, CiTrace::CTHeader& header) {
 
     // Setup initial GPU state
     //gfxInitDefault(); // TODO: Setup framebuffer info instead, here!
-    gfxInit(GSP_BGR8_OES,GSP_BGR8_OES,false);
+    gfxInit(GSP_BGR8_OES,GSP_BGR8_OES,true);
 
 
     NetworkPrint("Command list is located at %08X", (uint32_t)command_list.data());
@@ -643,9 +643,13 @@ int main() {
                     }
                     else if (addr == 0x104018F0) {
                         // We should wait for P3D here, but fuck it.
-                        if (data & 1) {
+                        /*if (data & 1) {
                             //gspWaitForP3D();
-                            svcSleepThread(100000000);
+                            //svcSleepThread(1000000000);
+                        }*/
+                        uint32_t val = 1;
+                        while (val & 1) {
+                            GSPGPU_ReadHWRegs(stream_element.register_write.physical_address - 0x10100000 + 0x1EC00000 - 0x1EB00000, &val, 4);
                         }
                     }
 
